@@ -31,7 +31,8 @@ module PANELCTRL(
            output oSTB,
            output spi_cs_l,
            output spi_data,
-           output spi_sclk
+           output spi_sclk,
+           output spi_done
        );
 
 // Register variables
@@ -39,7 +40,7 @@ reg [7:0]                       oRDATA;
 reg [7:0]                       oGDATA;
 reg [7:0]                       oBDATA;
 reg                             OSC12MHz;                 // 12 MHz oscillator register
-reg [3:0]                       conunter_1_5625_MHz;     // Counter for 1.5625 MHz frequency
+reg [3:0]                       counter_1_5625_MHz;     // Counter for 1.5625 MHz frequency
 
 // Wire (combinational signal) variables
 wire                            wVSYNC;                   // Vertical sync signal
@@ -67,7 +68,8 @@ wire [7:0]                      wBTN2_CNT;                // Button 2 count
 
 wire [3:0]                      wDIPSW_STATE;             // DIP switch state
 
-wire [7:0]                      wONEsec_COUNTS;           // 1 second counter
+wire [7:0]                      w_count_1s;               // 1 second counter
+wire [7:0]                      w_count_3s;               // 3 second counter
 wire                            wAUTO_PAT_EN;             // Auto pattern enable
 wire [1:0]                      wFRAME_RATE;              // Frame rate
 
@@ -121,15 +123,15 @@ clk_wiz_0   	clk_wiz_0(.reset(~iRESET),.clk_in1(iOSC),.clk_out1(iOSC_PCLK_60HZ),
 always@(posedge OSC_25 or negedge iRESET) begin
     if(!iRESET) begin
         OSC12MHz<=1'b0;
-        conunter_1_5625_MHz<= 1'b0;
+        counter_1_5625_MHz<= 4'd0;
     end
     else begin
         OSC12MHz<=~OSC12MHz; //12.5MHz
-        conunter_1_5625_MHz <= conunter_1_5625_MHz + 4'd1;
+        counter_1_5625_MHz <= counter_1_5625_MHz + 4'd1;
     end
 end
 
-assign OSC_1_5625MHz = conunter_1_5625_MHz[3];
+assign OSC_1_5625MHz = counter_1_5625_MHz[3];
 
 assign clk_out=(wFRAME_RATE==2'd1)?iOSC_PCLK_50HZ:iOSC_PCLK_60HZ;
 
@@ -173,7 +175,8 @@ PATTERNSEL uPATTERNSEL (
                .ihs         (wHSYNC), // Pipeline Input
                .ide         (wDE), // Pipeline Input
                .iauto_run   (wAUTO_PAT_EN),
-               .iauto_count (wONEsec_COUNTS),
+               //    .iauto_count (w_count_1s),
+               .iauto_count (w_count_3s),
                .ode         (wPAT_DE), // Pipeline Output
                .ohs         (wPAT_HS), // Pipeline Output
                .ovs         (wPAT_VS), // Pipeline Output
@@ -239,9 +242,27 @@ BUTTON uBUTTON (
 //--------------------------------------------
 // counter tick
 //--------------------------------------------
-COUNTER	uCOUNTER(.irst(iRESET),.iclk(iCLK_PLL),.ivsync(wVSYNC),.oCount_1s(wONEsec_COUNTS));
+COUNTER	uCOUNTER(.irst(iRESET),.iclk(iCLK_PLL),.ivsync(wVSYNC),.oCount_1s(w_count_1s),.oCount_3s(w_count_3s));
 //--------------------------------------------
 
+//--------------------------------------------
+// SPI Module
+//--------------------------------------------
+// spi_top uut_spi_top(.clk(OSC_1_5625MHz),
+//                     .rst(~iRESET),
+//                     .spi_cs_l(spi_cs_l),
+//                     .spi_sclk(spi_sclk),
+//                     .spi_data(spi_data),
+//                     .spi_done(spi_done));
+
+spi_top_jdi uut_spi_top_jdi(.clk(OSC_1_5625MHz),
+                            .rst(~iRESET),
+                            .spi_cs_l(spi_cs_l),
+                            .spi_sclk(spi_sclk),
+                            .spi_data(spi_data),
+                            .spi_done(spi_done));
+
+//--------------------------------------------
 
 //--------------------------------------------
 // Conrtol color data output by DIP switch
