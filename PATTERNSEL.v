@@ -3,7 +3,7 @@
 module PATTERNSEL(
            input                   iOSC,
            input                   iclk,
-           input                   mode,
+           input [1:0]             mode,
            input                   irst,
            input                   ide_state, // 1 clock cycle ahead of the DE signal
            input [7:0]             ipat_num,
@@ -41,15 +41,21 @@ reg [7:0]   last_auto_count;
 reg [8:0]   response_count;
 reg         response_flag;
 
+reg [9:0]   response_count_0_5s;
 reg [9:0]   response_count_1s;
 reg [9:0]   response_count_5s;
 reg [9:0]   response_count_10s;
 
+reg         response_flag_0_5s;
 reg         response_flag_1s;
 reg         response_flag_5s;
 reg         response_flag_10s;
 
 // Condition registers for various tests
+reg [7:0]      wCondition_CHESS_V1;
+
+reg [7:0]      wCondition_IS;
+
 reg            wCondition_CHESS;
 
 reg            wCondition_BORDER;
@@ -62,16 +68,6 @@ reg            wCondition_CROSSTALK2;
 
 reg            wCondition_VBW;
 reg            wCondition_HBW;
-
-reg            wCondition_FLICKER_DOT;
-reg            wCondition_FLICKER_1L2D;
-reg            wCondition_FLICKER_2L1D;
-reg            wCondition_FLICKER_2L2D;
-reg            wCondition_FLICKER_COLUMN;
-
-reg [7:0]     wCondition_FLICKER;
-
-reg           wFLICKER_X;
 
 reg [7:0]     wCondition_VGRAY;
 reg [7:0]     wCondition_HGRAY;
@@ -124,6 +120,7 @@ reg [9:0]   Num_Condition2;
 reg [9:0]   Num_Condition1;
 reg [9:0]   Num_Condition;
 
+
 //--------------------------------------------
 // HGRAY LUT
 //--------------------------------------------
@@ -154,8 +151,43 @@ GRAY_LUT #(
              .gray_data(vgray_data)
          );
 
+//--------------------------------------------
+// IS CHECKER LUT
+//--------------------------------------------
+wire [7:0]is_data;
+reg [22:0]is_x_coord, is_y_coord;
+IS_CHECKER_LUT #(
+                   .H_RESOLUTION(`H_PIXEL),
+                   .V_RESOLUTION(`V_PIXEL))
+               IS_CHECKER_LUT
+               (
+                   .clk(iclk),
+                   .rstn(irst),
+                   .x_coord(is_x_coord),
+                   .y_coord(is_y_coord),
+                   .gray_data(is_data)
+               );
 
-
+//--------------------------------------------
+// CHESS LUT
+//--------------------------------------------
+wire [7:0]chess_v1_data;
+reg [22:0]chess_v1_x_coord, chess_v1_y_coord;
+CHESS_LUT # (
+              .H_RESOLUTION(`H_PIXEL),
+              .V_RESOLUTION(`V_PIXEL),
+              .H_DIV(7),
+              .V_DIV(6),
+              .CHESS_BLACK(0),
+              .CHESS_WHITE(255)
+          )
+          CHESS_7x6_LUT_inst (
+              .clk(iclk),
+              .rstn(irst),
+              .x_coord(chess_v1_x_coord),
+              .y_coord(chess_v1_y_coord),
+              .chess_data(chess_v1_data)
+          );
 
 //--------------------------------------------
 // Pipeline Stage 0: Input Buffer
@@ -204,7 +236,6 @@ reg ix_even_s1, ix_div4_s1;
 reg iy_even_s1, iy_div4_s1;
 
 reg [3:0]ix_rem_s1, iy_rem_s1;
-
 always @(posedge iclk or negedge irst) begin
     if(!irst) begin
         x_s1 <= 22'd0;
@@ -274,9 +305,6 @@ reg iy_even_s2, iy_div4_s2;
 
 reg chessx_s2, chessy_s2, chess_s2;
 
-reg flicker_dot_s2;
-reg flicker_1L2D_s2, flicker_2L1D_s2, flicker_2L2D_s2, flicker_column_s2;
-
 reg crosstalk1_s2, crosstalk2_s2;
 
 reg press_x_s2, press_y_s2;
@@ -303,12 +331,6 @@ always @(posedge iclk or negedge irst) begin
         chessx_s2 <= 0;
         chessy_s2 <= 0;
         chess_s2 <= 0;
-
-        flicker_dot_s2 <= 0;
-        flicker_1L2D_s2 <= 0;
-        flicker_2L1D_s2 <= 0;
-        flicker_2L2D_s2 <= 0;
-        flicker_column_s2 <= 0;
 
         crosstalk1_s2 <= 0;
         crosstalk2_s2 <= 0;
@@ -355,13 +377,6 @@ always @(posedge iclk or negedge irst) begin
 
         chess_s2 <= chessx_s2 ^ chessy_s2;
 
-        // Flicker Pattern
-        flicker_dot_s2   <= ix_even_s1 ^ iy_even_s1;     // wCondition_FLICKER_DOT = wCondition_VBW ^ wCondition_HBW;
-        flicker_1L2D_s2  <= ix_even_s1 ^ iy_even_s1;     // wCondition_FLICKER_1L2D = wCondition_VBW_1 ^ wCondition_HBW_1;
-        flicker_2L1D_s2  <= ix_div4_s1 ^ iy_even_s1;     // wCondition_FLICKER_2L1D = wCondition_VBW_2 ^ wCondition_HBW_2;
-        flicker_2L2D_s2  <= ix_div4_s1 ^ iy_even_s1;     // wCondition_FLICKER_2L2D = wCondition_VBW_3 ^ wCondition_HBW_3;
-        flicker_column_s2 <= ix_even_s1 ^ 1'b1;          // wCondition_FLICKER_COLUMN = wCondition_VBW_4 ^ wCondition_HBW_4;
-
         // Crosstalk
         crosstalk1_s2 <= ix_even_s1;      // (ix % 2) == 0
         crosstalk2_s2 <= ~ix_even_s1;     // (ix % 2) == 1
@@ -380,7 +395,7 @@ always @(posedge iclk or negedge irst) begin
                    (y_s1 == (13*VPIX_16))|| (y_s1 == (14*VPIX_16))|| (y_s1 == (15*VPIX_16))||
                    (y_s1 == (16*VPIX_16));
 
-        // TP 四角
+        // TP Pressure
         tp_p1_s2 <= (x_s1 >= 0 && x_s1 < 192) && (y_s1 >= 0 && y_s1 < 72);
         tp_p2_s2 <= (x_s1 >= (`H_PIXEL-192) && x_s1 < (`H_PIXEL)) && (y_s1 >= 0 && y_s1 < 72);
         tp_p3_s2 <= (x_s1 >= 0 && x_s1 < 192) && (y_s1 >= (`V_PIXEL-72) && y_s1 < (`V_PIXEL));
@@ -404,9 +419,6 @@ reg ix_even_s3, ix_div4_s3;
 reg iy_even_s3, iy_div4_s3;
 
 reg chess_s3;
-
-reg flicker_dot_s3;
-reg flicker_1L2D_s3, flicker_2L1D_s3, flicker_2L2D_s3, flicker_column_s3;
 
 reg crosstalk1_s3, crosstalk2_s3;
 
@@ -433,11 +445,6 @@ always @(posedge iclk or negedge irst) begin
         iy_even_s3 <= 0;
         iy_div4_s3 <= 0;
         chess_s3 <= 0;
-        flicker_dot_s3 <= 0;
-        flicker_1L2D_s3 <= 0;
-        flicker_2L1D_s3 <= 0;
-        flicker_2L2D_s3 <= 0;
-        flicker_column_s3 <= 0;
         crosstalk1_s3 <= 0;
         crosstalk2_s3 <= 0;
         press_x_s3 <= 0;
@@ -468,11 +475,6 @@ always @(posedge iclk or negedge irst) begin
         iy_even_s3 <= iy_even_s2;
         iy_div4_s3 <= iy_div4_s2;
         chess_s3 <= chess_s2;
-        flicker_dot_s3 <= flicker_dot_s2;
-        flicker_1L2D_s3 <= flicker_1L2D_s2;
-        flicker_2L1D_s3 <= flicker_2L1D_s2;
-        flicker_2L2D_s3 <= flicker_2L2D_s2;
-        flicker_column_s3 <= flicker_column_s2;
         crosstalk1_s3 <= crosstalk1_s2;
         crosstalk2_s3 <= crosstalk2_s2;
         press_x_s3 <= press_x_s2;
@@ -487,6 +489,15 @@ always @(posedge iclk or negedge irst) begin
 
         // --- VGRAY Logic ---
         vgray_y_coord <= y_s2;
+
+        // --- IS CHECKER Logic ---
+        is_x_coord <= x_s2;
+        is_y_coord <= y_s2;
+
+        // --- CHESS Logic ---
+        chess_v1_x_coord <= x_s2;
+        chess_v1_y_coord <= y_s2;
+
 
         ix_rem_s3 <= ix_rem_s2;
         iy_rem_s3 <= iy_rem_s2;
@@ -508,16 +519,16 @@ reg iy_even_s4, iy_div4_s4;
 
 reg chess_s4;
 
-reg flicker_dot_s4;
-reg flicker_1L2D_s4, flicker_2L1D_s4, flicker_2L2D_s4, flicker_column_s4;
-
 reg crosstalk1_s4, crosstalk2_s4;
 
 reg press_x_s4, press_y_s4;
 
 reg tp_p1_s4, tp_p2_s4, tp_p3_s4, tp_p4_s4;
 
-reg [7:0]  vgray_s4, hgray_s4;
+reg [7:0] vgray_s4, hgray_s4;
+reg [7:0] is_data_s4;
+
+reg [7:0] chess_v1_data_s4;
 
 reg [3:0]ix_rem_s4, iy_rem_s4;
 always @(posedge iclk or negedge irst) begin
@@ -537,11 +548,6 @@ always @(posedge iclk or negedge irst) begin
         iy_even_s4 <= 0;
         iy_div4_s4 <= 0;
         chess_s4 <= 0;
-        flicker_dot_s4 <= 0;
-        flicker_1L2D_s4 <= 0;
-        flicker_2L1D_s4 <= 0;
-        flicker_2L2D_s4 <= 0;
-        flicker_column_s4 <= 0;
         crosstalk1_s4 <= 0;
         crosstalk2_s4 <= 0;
         press_x_s4 <= 0;
@@ -553,6 +559,8 @@ always @(posedge iclk or negedge irst) begin
 
         vgray_s4 <= 0;
         hgray_s4 <= 0;
+
+        is_data_s4 <= 0;
 
         ix_rem_s4 <= 0;
         iy_rem_s4 <= 0;
@@ -573,11 +581,6 @@ always @(posedge iclk or negedge irst) begin
         iy_even_s4 <= iy_even_s3;
         iy_div4_s4 <= iy_div4_s3;
         chess_s4 <= chess_s3;
-        flicker_dot_s4 <= flicker_dot_s3;
-        flicker_1L2D_s4 <= flicker_1L2D_s3;
-        flicker_2L1D_s4 <= flicker_2L1D_s3;
-        flicker_2L2D_s4 <= flicker_2L2D_s3;
-        flicker_column_s4 <= flicker_column_s3;
         crosstalk1_s4 <= crosstalk1_s3;
         crosstalk2_s4 <= crosstalk2_s3;
         press_x_s4 <= press_x_s3;
@@ -589,6 +592,10 @@ always @(posedge iclk or negedge irst) begin
 
         hgray_s4 <= hgray_data;
         vgray_s4 <= vgray_data;
+
+        is_data_s4 <= is_data;
+
+        chess_v1_data_s4 <= chess_v1_data;
 
         ix_rem_s4 <= ix_rem_s3;
         iy_rem_s4 <= iy_rem_s3;
@@ -625,16 +632,13 @@ always @(*) begin
     wCondition_CHESS    = chess_s4;
     wCondition_VGRAY    = vgray_s4;
     wCondition_HGRAY    = hgray_s4;
+    wCondition_IS       = is_data_s4;
+    wCondition_CHESS_V1 = chess_v1_data_s4;
     wCondition_CROSSTALK1 = crosstalk1_s4;
     wCondition_CROSSTALK2 = crosstalk2_s4;
 
     wCondition_VBW = ix_even_s4;
     wCondition_HBW = iy_even_s4;
-
-    wCondition_FLICKER_DOT = flicker_dot_s4;
-    wCondition_FLICKER_2L1D = flicker_2L1D_s4;
-    wCondition_FLICKER_2L2D = flicker_2L2D_s4;
-    wCondition_FLICKER_COLUMN = flicker_column_s4;
 
     wPressure_ConditionX = press_x_s4;
     wPressure_ConditionY = press_y_s4;
@@ -647,16 +651,34 @@ end
 
 
 
-always@(pattern_count or mode) begin
+always@(*) begin
     case(mode)
         2'b10:
-            wpattern_count<=`COLOR_8G8C;
+            wpattern_count <= `COLOR_8G8C;
         2'b01:
-            wpattern_count<=`FLICKER_PAT_DOT;
+            wpattern_count <= `WHITE_PAT;
         default:
-            wpattern_count<=pattern_count;
+            wpattern_count <= pattern_count;
     endcase
 
+end
+
+// 0.5s
+always@(posedge vs_s3 or negedge irst) begin
+    if(!irst) begin
+        response_flag_0_5s <= 1'b0;
+        response_count_0_5s <= 10'd0;
+    end
+    else begin
+        if(response_count_0_5s >= 10'd30) // 1*2 - 1
+        begin
+            response_count_0_5s <= 10'd0;
+            response_flag_0_5s <= ~response_flag_0_5s;
+        end
+        else
+            response_count_0_5s <= response_count_0_5s + 10'd1;
+
+    end
 end
 
 // 1s
@@ -964,7 +986,7 @@ always@(posedge iclk or negedge irst) begin
     end
     else begin
         // if(de_state_s4) begin
-        if(1'd1) begin
+        if(de_state_s4) begin
             case(wpattern_count)
                 `CHAR_H_PAT: begin
                     case(wFONTH_INDEX_Y)
@@ -1040,6 +1062,21 @@ always@(posedge iclk or negedge irst) begin
                     oUD_RL<=1'b0;
                     oframe_rate <= 2'd0;
                     BLUE_PATTERN_L128(ordata,ogdata,obdata);
+                end
+                `GB_PAT: begin
+                    oUD_RL<=1'b0;
+                    oframe_rate <= 2'd0;
+                    GREEN_BLUE_PATTERN(ordata,ogdata,obdata);
+                end
+                `RB_PAT: begin
+                    oUD_RL<=1'b0;
+                    oframe_rate <= 2'd0;
+                    RED_BLUE_PATTERN(ordata,ogdata,obdata);
+                end
+                `RG_PAT: begin
+                    oUD_RL<=1'b0;
+                    oframe_rate <= 2'd0;
+                    RED_GREEN_PATTERN(ordata,ogdata,obdata);
                 end
                 `WHITE_PAT: begin
                     oUD_RL<=1'b0;
@@ -1227,6 +1264,11 @@ always@(posedge iclk or negedge irst) begin
                     oframe_rate <= 2'd0;
                     LUSTER_PATTERN(`LEVEL_32,ordata,ogdata,obdata);
                 end
+                `LUSTER_L22: begin
+                    oUD_RL<=1'b0;
+                    oframe_rate <= 2'd0;
+                    LUSTER_PATTERN(`LEVEL_22,ordata,ogdata,obdata);
+                end
                 `LUSTER_L16: begin
                     oUD_RL<=1'b0;
                     oframe_rate <= 2'd0;
@@ -1293,6 +1335,24 @@ always@(posedge iclk or negedge irst) begin
                     oframe_rate <= 2'd0;
                     HGRAY_PATTERN_B(wCondition_HGRAY,ordata,ogdata,obdata);
                 end
+
+                `RGBW_GRAY_PAT: begin
+                    oUD_RL<=1'b0;
+                    oframe_rate <= 2'd0;
+                    RGBW_GRAY_PATTERN(y_s4, wCondition_HGRAY,ordata,ogdata,obdata);
+                end
+
+                `IS_CHECKER_PAT: begin
+                    oUD_RL<=1'b0;
+                    oframe_rate <= 2'd0;
+                    IS_CHECKER_PATTERN(wCondition_IS,ordata,ogdata,obdata);
+                end
+                `CHESS_PAT_V1: begin
+                    oUD_RL<=1'b0;
+                    oframe_rate <= 2'd0;
+                    CHESS_PATTERN_V(wCondition_CHESS_V1,ordata,ogdata,obdata);
+                end
+
                 `HBW_PAT: begin
                     oUD_RL<=1'b0;
                     HBW_PATTERN(wCondition_HBW,ordata,ogdata,obdata);
@@ -1320,27 +1380,27 @@ always@(posedge iclk or negedge irst) begin
                 `FLICKER_PAT_DOT: begin
                     oUD_RL<=1'b0;
                     oframe_rate <= 2'd0;
-                    FLICKER_PATTERN(`LUMIN_FIFTY,wCondition_FLICKER_DOT,ordata,ogdata,obdata);
+                    FLICKER_PATTERN_DOT(`LUMIN_FIFTY,x_s4,y_s4,ordata,ogdata,obdata);
                 end
                 `FLICKER_PAT_1L2D: begin
                     oUD_RL<=1'b0;
                     oframe_rate <= 2'd0;
-                    FLICKER_PATTERN(`LUMIN_FIFTY,wCondition_FLICKER_1L2D,ordata,ogdata,obdata);
+                    FLICKER_PATTERN_1L2D(`LUMIN_FIFTY,x_s4,y_s4,ordata,ogdata,obdata);
                 end
                 `FLICKER_PAT_2L1D: begin
                     oUD_RL<=1'b0;
                     oframe_rate <= 2'd0;
-                    FLICKER_PATTERN(`LUMIN_FIFTY,wCondition_FLICKER_2L1D,ordata,ogdata,obdata);
+                    FLICKER_PATTERN_2L1D(`LUMIN_FIFTY,x_s4,y_s4,ordata,ogdata,obdata);
                 end
                 `FLICKER_PAT_2L2D: begin
                     oUD_RL<=1'b0;
                     oframe_rate <= 2'd0;
-                    FLICKER_PATTERN(`LUMIN_FIFTY,wCondition_FLICKER_2L2D,ordata,ogdata,obdata);
+                    FLICKER_PATTERN_2L2D(`LUMIN_FIFTY,x_s4,y_s4,ordata,ogdata,obdata);
                 end
                 `FLICKER_PAT_COLUMN: begin
                     oUD_RL<=1'b0;
                     oframe_rate <= 2'd0;
-                    FLICKER_PATTERN(`LUMIN_FIFTY,wCondition_FLICKER_COLUMN,ordata,ogdata,obdata);
+                    FLICKER_PATTERN_COLUMN(`LUMIN_FIFTY,x_s4,y_s4,ordata,ogdata,obdata);
                 end
                 `COLOR_8G8C: begin
                     oUD_RL<=1'b0;
@@ -1356,6 +1416,11 @@ always@(posedge iclk or negedge irst) begin
                     oUD_RL<=1'b0;
                     oframe_rate <= 2'd0;
                     RESPONSE_PATTERN(response_flag,ordata,ogdata,obdata);
+                end
+                `RESPONSE_PAT_0_5s: begin
+                    oUD_RL<=1'b0;
+                    oframe_rate <= 2'd0;
+                    RESPONSE_PATTERN(response_flag_0_5s,ordata,ogdata,obdata);
                 end
                 `RESPONSE_PAT_1s: begin
                     oUD_RL<=1'b0;
@@ -1501,6 +1566,42 @@ task BLUE_PATTERN_L128;
         rdata <= 8'd0;
         gdata <= 8'd0;
         bdata <= 8'd128;
+    end
+endtask
+
+// R+G
+task RED_GREEN_PATTERN;
+    output[7:0]		rdata;
+    output[7:0]		gdata;
+    output[7:0]		bdata;
+    begin
+        rdata <= 8'd255;
+        gdata <= 8'd255;
+        bdata <= 8'd0;
+    end
+endtask
+
+// G+B
+task GREEN_BLUE_PATTERN;
+    output[7:0]		rdata;
+    output[7:0]		gdata;
+    output[7:0]		bdata;
+    begin
+        rdata <= 8'd0;
+        gdata <= 8'd255;
+        bdata <= 8'd255;
+    end
+endtask
+
+// R+B
+task RED_BLUE_PATTERN;
+    output[7:0]		rdata;
+    output[7:0]		gdata;
+    output[7:0]		bdata;
+    begin
+        rdata <= 8'd255;
+        gdata <= 8'd0;
+        bdata <= 8'd255;
     end
 endtask
 
@@ -1787,15 +1888,16 @@ task COLOR_PATTERN_8color;
     end
 endtask
 
-// FLICKER Pattern Dot Inversion
-task FLICKER_PATTERN;
+// FLICKER Pattern
+task FLICKER_PATTERN_DOT;
     input[7:0]      LUMIN_PARAMETER;
-    input			condition1;
+    input[22:0]	    ix;
+    input[22:0]     iy;
     output[7:0]		rdata;
     output[7:0]		gdata;
     output[7:0]		bdata;
     begin
-        if(condition1) begin
+        if(ix[0] ^ iy[0]) begin
             rdata <= 8'd0;
             gdata <= LUMIN_PARAMETER;
             bdata <= 8'd0;
@@ -1808,47 +1910,180 @@ task FLICKER_PATTERN;
     end
 endtask
 
-// FLICKER Pattern
-task FLICKER_PATTERN_P;
-    /*	input			condition1;
-    	output[7:0]		rdata;
-    	output[7:0]		gdata;
-    	output[7:0]		bdata;
-    	begin
-    		if(condition1)
-    			begin
-    				rdata <= `LUMIN_TWENTY;
-    				gdata <= `LUMIN_TWENTY;
-    				bdata <= `LUMIN_TWENTY;
-    			end
-    		else
-    			begin
-    				rdata <=  8'd0;
-    				gdata <=  8'd0;
-    				bdata <=  8'd0;
-    			end
-
-    	end
-    endtask*/
-
-
-
-    input			condition1;
-    input[7:0]		condition2;
+task FLICKER_PATTERN_COLUMN;
+    input[7:0]      LUMIN_PARAMETER;
+    input[22:0]	    ix;
+    input[22:0]     iy;
     output[7:0]		rdata;
     output[7:0]		gdata;
     output[7:0]		bdata;
     begin
-        if(condition1) begin
-            rdata <= (condition2 ^ 8'd0);
-            gdata <= (condition2 ^ `LUMIN_TWENTY);
-            bdata <= (condition2 ^ 8'd0);
+        if(ix[0]) begin
+            rdata <= 8'd0;
+            gdata <= LUMIN_PARAMETER;
+            bdata <= 8'd0;
         end
         else begin
-            rdata <= (condition2 ^ `LUMIN_TWENTY);
-            gdata <= (condition2 ^ 8'd0);
-            bdata <= (condition2 ^ `LUMIN_TWENTY);
+            rdata <= LUMIN_PARAMETER;
+            gdata <= 8'd0;
+            bdata <= LUMIN_PARAMETER;
         end
+    end
+endtask
+
+task FLICKER_PATTERN_1L2D;
+    input[7:0]      LUMIN_PARAMETER;
+    input[22:0]	    ix;
+    input[22:0]     iy;
+    output[7:0]		rdata;
+    output[7:0]		gdata;
+    output[7:0]		bdata;
+    begin
+        case ({iy[0], ix[1:0]})
+            3'b000: begin
+                rdata <= 8'd0;
+                gdata <= 8'd0;
+                bdata <= LUMIN_PARAMETER;
+            end
+            3'b001: begin
+                rdata <= LUMIN_PARAMETER;
+                gdata <= 8'd0;
+                bdata <= 8'd0;
+            end
+            3'b010: begin
+                rdata <= LUMIN_PARAMETER;
+                gdata <= LUMIN_PARAMETER;
+                bdata <= 8'd0;
+            end
+            3'b011: begin
+                rdata <= 8'd0;
+                gdata <= LUMIN_PARAMETER;
+                bdata <= LUMIN_PARAMETER;
+            end
+            3'b100: begin
+                rdata <= LUMIN_PARAMETER;
+                gdata <= LUMIN_PARAMETER;
+                bdata <= 8'd0;
+            end
+            3'b101: begin
+                rdata <= 8'd0;
+                gdata <= LUMIN_PARAMETER;
+                bdata <= LUMIN_PARAMETER;
+            end
+            3'b110: begin
+                rdata <= 8'd0;
+                gdata <= 8'd0;
+                bdata <= LUMIN_PARAMETER;
+            end
+            3'b111: begin
+                rdata <= LUMIN_PARAMETER;
+                gdata <= 8'd0;
+                bdata <= 8'd0;
+            end
+            default : begin
+                rdata <= 8'd0;
+                gdata <= 8'd0;
+                bdata <= 8'd0;
+            end
+        endcase
+    end
+endtask
+
+task FLICKER_PATTERN_2L1D;
+    input[7:0]      LUMIN_PARAMETER;
+    input[22:0]	    ix;
+    input[22:0]     iy;
+    output[7:0]		rdata;
+    output[7:0]		gdata;
+    output[7:0]		bdata;
+    begin
+        case({iy[1],ix[0]})
+            2'b00: begin
+                rdata <= 8'd0;
+                gdata <= LUMIN_PARAMETER;
+                bdata <= 8'd0;
+            end
+            2'b01: begin
+                rdata <= LUMIN_PARAMETER;
+                gdata <= 8'd0;
+                bdata <= LUMIN_PARAMETER;
+            end
+            2'b10: begin
+                rdata <= LUMIN_PARAMETER;
+                gdata <= 8'd0;
+                bdata <= LUMIN_PARAMETER;
+            end
+            2'b11: begin
+                rdata <= 8'd0;
+                gdata <= LUMIN_PARAMETER;
+                bdata <= 8'd0;
+            end
+            default : begin
+                rdata <= 8'd0;
+                gdata <= 8'd0;
+                bdata <= 8'd0;
+            end
+
+        endcase
+    end
+endtask
+
+task FLICKER_PATTERN_2L2D;
+    input[7:0]      LUMIN_PARAMETER;
+    input[22:0]	    ix;
+    input[22:0]     iy;
+    output[7:0]		rdata;
+    output[7:0]		gdata;
+    output[7:0]		bdata;
+    begin
+        case({iy[1],ix[1:0]})
+            3'b000: begin
+                rdata <= 8'd0;
+                gdata <= 8'd0;
+                bdata <= LUMIN_PARAMETER;
+            end
+            3'b001: begin
+                rdata <= LUMIN_PARAMETER;
+                gdata <= 8'd0;
+                bdata <= 8'd0;
+            end
+            3'b010: begin
+                rdata <= LUMIN_PARAMETER;
+                gdata <= LUMIN_PARAMETER;
+                bdata <= 8'd0;
+            end
+            3'b011: begin
+                rdata <= 8'd0;
+                gdata <= LUMIN_PARAMETER;
+                bdata <= LUMIN_PARAMETER;
+            end
+            3'b100: begin
+                rdata <= LUMIN_PARAMETER;
+                gdata <= LUMIN_PARAMETER;
+                bdata <= 8'd0;
+            end
+            3'b101: begin
+                rdata <= 8'd0;
+                gdata <= LUMIN_PARAMETER;
+                bdata <= LUMIN_PARAMETER;
+            end
+            3'b110: begin
+                rdata <= 8'd0;
+                gdata <= 8'd0;
+                bdata <= LUMIN_PARAMETER;
+            end
+            3'b111: begin
+                rdata <= LUMIN_PARAMETER;
+                gdata <= 8'd0;
+                bdata <= 8'd0;
+            end
+            default : begin
+                rdata <= 8'd0;
+                gdata <= 8'd0;
+                bdata <= 8'd0;
+            end
+
+        endcase
     end
 endtask
 
@@ -1965,6 +2200,41 @@ task HGRAY_PATTERN;
     end
 endtask
 
+task RGBW_GRAY_PATTERN;
+    input[22:0]     iy;
+    input[7:0]		condition;
+    output[7:0]		rdata;
+    output[7:0]		gdata;
+    output[7:0]		bdata;
+    begin
+        if((iy >= (`V_PIXEL >> 2) * 0) && (iy < (`V_PIXEL >> 2) * 1)) begin
+            rdata <= ~condition;
+            gdata <= 0;
+            bdata <= 0;
+
+        end
+        else if((iy >= (`V_PIXEL >> 2) * 1) && (iy < (`V_PIXEL >> 2) * 2)) begin
+            rdata <= 0;
+            gdata <= ~condition;
+            bdata <= 0;
+        end
+        else if((iy >= (`V_PIXEL >> 2) * 2) && (iy < (`V_PIXEL >> 2) * 3)) begin
+            rdata <= 0;
+            gdata <= 0;
+            bdata <= ~condition;
+        end
+        else if((iy >= (`V_PIXEL >> 2) * 3) && (iy <= `V_PIXEL)) begin
+            rdata <= ~condition;
+            gdata <= ~condition;
+            bdata <= ~condition;
+        end
+        else begin
+            rdata <= 0;
+            gdata <= 0;
+            bdata <= 0;
+        end
+    end
+endtask
 
 task HGRAY_PATTERN_R;
     input[7:0]		condition;
@@ -2050,6 +2320,32 @@ task VGRAY_PATTERN_G;
         rdata <= 8'd0;
         gdata <= condition;
         bdata <= 8'd0;
+    end
+endtask
+
+// IS CHECKER PATTERN
+task IS_CHECKER_PATTERN;
+    input[7:0]		condition;
+    output[7:0]		rdata;
+    output[7:0]		gdata;
+    output[7:0]		bdata;
+    begin
+        rdata <= condition;
+        gdata <= condition;
+        bdata <= condition;
+    end
+endtask
+
+
+task CHESS_PATTERN_V;
+    input[7:0]		condition;
+    output[7:0]		rdata;
+    output[7:0]		gdata;
+    output[7:0]		bdata;
+    begin
+        rdata <= condition;
+        gdata <= condition;
+        bdata <= condition;
     end
 endtask
 // WINDOW Pattern
