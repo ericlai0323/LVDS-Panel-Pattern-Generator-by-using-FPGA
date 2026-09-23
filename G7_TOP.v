@@ -68,7 +68,10 @@ module G7_TOP(
            output wire oSTB,
            output wire spi_cs_l,
            output wire spi_data,
-           output wire spi_sclk
+           output wire spi_sclk,
+
+           output EXIP_0_D7,
+           output EXIP_1_D8
        );
 
 // Transmission data wires for A and B channels
@@ -336,6 +339,7 @@ top5x2_7to1_sdr_tx_WO_clkgen U0_1(
 
                              ) ;
 
+wire spi_done;
 
 PANELCTRL	U1(	.iRESET(iRESET),.iOSC(iOSC),
               .iBUTTON_0(iBUTTON_0),.iBUTTON_1(iBUTTON_1),.iBUTTON_2(iBUTTON_2),
@@ -345,8 +349,12 @@ PANELCTRL	U1(	.iRESET(iRESET),.iOSC(iOSC),
               .oVSYNC(T_VS),.oHSYNC(T_HS),.oDE(T_DE),
               .oRDATA_86(oRDATA_86),.oGDATA_86(oGDATA_86),.oBDATA_86(oBDATA_86),
               .oSTB(oSTB),
-              .spi_cs_l(spi_cs_l), .spi_data(spi_data), .spi_sclk(spi_sclk));
+              .spi_cs_l(spi_cs_l), .spi_data(spi_data), .spi_sclk(spi_sclk),
+              .spi_done(spi_done));
 
+
+assign EXIP_0_D7 = ~spi_done;
+assign EXIP_1_D8 = spi_done;
 
 two_prt		U2( .iRESET(iRESET),.iclk(Tclk),
              .oclk(DCLK),.two_port_sel(`two_prt_sel),.iSW3(iSW3),
